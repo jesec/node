@@ -13,12 +13,61 @@
 #include "cppgc/visitor.h"
 
 namespace cppgc {
-
 namespace internal {
+
+// Wrapper around PersistentBase that allows accessing poisoned memory when
+// using ASAN. This is needed as the GC of the heap that owns the value
+// of a CTP, may clear it (heap termination, weakness) while the object
+// holding the CTP may be poisoned as itself may be deemed dead.
+class CrossThreadPersistentBase : public PersistentBase {
+ public:
+  CrossThreadPersistentBase() = default;
+  explicit CrossThreadPersistentBase(const void* raw) : PersistentBase(raw) {}
+
+  V8_CLANG_NO_SANITIZE("address") const void* GetValueFromGC() const {
+    return raw_;
+  }
+
+  V8_CLANG_NO_SANITIZE("address")
+  PersistentNode* GetNodeFromGC() const { return node_; }
+
+  V8_CLANG_NO_SANITIZE("address")
+  void ClearFromGC() const {
+    raw_ = nullptr;
+    SetNodeSafe(nullptr);
+  }
+
+  // GetNodeSafe() can be used for a thread-safe IsValid() check.
+  PersistentNode* GetNodeSafe() const {
+    return reinterpret_cast<std::atomic<PersistentNode*>*>(&node_)->load(
+        std::memory_order_relaxed);
+  }
+
+  // The GC writes using SetNodeSafe() while holding the lock.
+  V8_CLANG_NO_SANITIZE("address")
+  void SetNodeSafe(PersistentNode* value) const {
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define V8_IS_ASAN 1
+#endif
+#endif
+
+#ifdef V8_IS_ASAN
+    __atomic_store(&node_, &value, __ATOMIC_RELAXED);
+#else   // !V8_IS_ASAN
+    // Non-ASAN builds can use atomics. This also covers MSVC which does not
+    // have the __atomic_store intrinsic.
+    reinterpret_cast<std::atomic<PersistentNode*>*>(&node_)->store(
+        value, std::memory_order_relaxed);
+#endif  // !V8_IS_ASAN
+
+#undef V8_IS_ASAN
+  }
+};
 
 template <typename T, typename WeaknessPolicy, typename LocationPolicy,
           typename CheckingPolicy>
-class BasicCrossThreadPersistent final : public PersistentBase,
+class BasicCrossThreadPersistent final : public CrossThreadPersistentBase,
                                          public LocationPolicy,
                                          private WeaknessPolicy,
                                          private CheckingPolicy {
@@ -38,11 +87,11 @@ class BasicCrossThreadPersistent final : public PersistentBase,
 
   BasicCrossThreadPersistent(
       SentinelPointer s, const SourceLocation& loc = SourceLocation::Current())
-      : PersistentBase(s), LocationPolicy(loc) {}
+      : CrossThreadPersistentBase(s), LocationPolicy(loc) {}
 
   BasicCrossThreadPersistent(
       T* raw, const SourceLocation& loc = SourceLocation::Current())
-      : PersistentBase(raw), LocationPolicy(loc) {
+      : CrossThreadPersistentBase(raw), LocationPolicy(loc) {
     if (!IsValid(raw)) return;
     PersistentRegionLock guard;
     CrossThreadPersistentRegion& region = this->GetPersistentRegion(raw);
@@ -61,7 +110,7 @@ class BasicCrossThreadPersistent final : public PersistentBase,
   BasicCrossThreadPersistent(
       UnsafeCtorTag, T* raw,
       const SourceLocation& loc = SourceLocation::Current())
-      : PersistentBase(raw), LocationPolicy(loc) {
+      : CrossThreadPersistentBase(raw), LocationPolicy(loc) {
     if (!IsValid(raw)) return;
     CrossThreadPersistentRegion& region = this->GetPersistentRegion(raw);
     SetNode(region.AllocateNode(this, &Trace));
@@ -188,11 +237,10 @@ class BasicCrossThreadPersistent final : public PersistentBase,
    */
   void Clear() {
     // Simplified version of `Assign()` to allow calling without a complete type
-    // `T`.
-    const void* old_value = GetValue();
-    if (IsValid(old_value)) {
+    // `T`. Also performs a thread-safe check for a handle that is not valid.
+    if (GetNodeSafe()) {
       PersistentRegionLock guard;
-      old_value = GetValue();
+      const void* old_value = GetValue();
       // The fast path check (IsValid()) does not acquire the lock. Reload
       // the value to ensure the reference has not been cleared.
       if (IsValid(old_value)) {
@@ -329,10 +377,17 @@ class BasicCrossThreadPersistent final : public PersistentBase,
   }
 
   void ClearFromGC() const {
-    if (IsValid(GetValue())) {
-      WeaknessPolicy::GetPersistentRegion(GetValue()).FreeNode(GetNode());
-      PersistentBase::ClearFromGC();
+    if (IsValid(GetValueFromGC())) {
+      WeaknessPolicy::GetPersistentRegion(GetValueFromGC())
+          .FreeNode(GetNodeFromGC());
+      CrossThreadPersistentBase::ClearFromGC();
     }
+  }
+
+  // See Get() for details.
+  V8_CLANG_NO_SANITIZE("cfi-unrelated-cast")
+  T* GetFromGC() const {
+    return static_cast<T*>(const_cast<void*>(GetValueFromGC()));
   }
 
   friend class cppgc::Visitor;

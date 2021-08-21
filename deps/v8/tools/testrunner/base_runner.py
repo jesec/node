@@ -113,7 +113,8 @@ SLOW_ARCHS = [
   "mips64el",
   "s390",
   "s390x",
-  "riscv64"
+  "riscv64",
+  "loong64"
 ]
 
 
@@ -267,6 +268,7 @@ class BaseTestRunner(object):
     self.build_config = None
     self.mode_options = None
     self.target_os = None
+    self.infra_staging = False
 
   @property
   def framework_name(self):
@@ -279,10 +281,16 @@ class BaseTestRunner(object):
     try:
       parser = self._create_parser()
       options, args = self._parse_args(parser, sys_args)
+      self.infra_staging = options.infra_staging
       if options.swarming:
         # Swarming doesn't print how isolated commands are called. Lets make
         # this less cryptic by printing it ourselves.
         print(' '.join(sys.argv))
+
+        # TODO(machenbach): Print used Python version until we have switched to
+        # Python3 everywhere.
+        print('Running with:')
+        print(sys.version)
 
         # Kill stray processes from previous tasks on swarming.
         util.kill_processes_linux()
@@ -343,6 +351,13 @@ class BaseTestRunner(object):
                       help="How long should fuzzer run")
     parser.add_option("--swarming", default=False, action="store_true",
                       help="Indicates running test driver on swarming.")
+    parser.add_option('--infra-staging', help='Use new test runner features',
+                      dest='infra_staging', default=None,
+                      action='store_true')
+    parser.add_option('--no-infra-staging',
+                      help='Opt out of new test runner features',
+                      dest='infra_staging', default=None,
+                      action='store_false')
 
     parser.add_option("-j", help="The number of parallel tasks to run",
                       default=0, type=int)
@@ -365,9 +380,6 @@ class BaseTestRunner(object):
                       help="Path to a file for storing json results.")
     parser.add_option('--slow-tests-cutoff', type="int", default=100,
                       help='Collect N slowest tests')
-    parser.add_option("--junitout", help="File name of the JUnit output")
-    parser.add_option("--junittestsuite", default="v8tests",
-                      help="The testsuite name in the JUnit output file")
     parser.add_option("--exit-after-n-failures", type="int", default=100,
                       help="Exit after the first N failures instead of "
                            "running all tests. Pass 0 to disable this feature.")
@@ -661,6 +673,15 @@ class BaseTestRunner(object):
        self.build_config.arch == 'mipsel':
        no_simd_hardware = not simd_mips
 
+    if self.build_config.arch == 'loong64':
+       no_simd_hardware = True
+
+    # S390 hosts without VEF1 do not support Simd.
+    if self.build_config.arch == 's390x' and \
+       not self.build_config.simulator_run and \
+       not utils.IsS390SimdSupported():
+       no_simd_hardware = True
+
     # Ppc64 processors earlier than POWER9 do not support Simd instructions
     if self.build_config.arch == 'ppc64' and \
        not self.build_config.simulator_run and \
@@ -738,7 +759,7 @@ class BaseTestRunner(object):
     if self.build_config.predictable:
       factor *= 4
     if self.build_config.tsan:
-      factor *= 1.5
+      factor *= 2
     if self.build_config.use_sanitizer:
       factor *= 1.5
     if self.build_config.is_full_debug:
@@ -801,9 +822,6 @@ class BaseTestRunner(object):
 
   def _create_progress_indicators(self, test_count, options):
     procs = [PROGRESS_INDICATORS[options.progress]()]
-    if options.junitout:
-      procs.append(progress.JUnitTestProgressIndicator(options.junitout,
-                                                       options.junittestsuite))
     if options.json_test_results:
       procs.append(progress.JsonTestProgressIndicator(self.framework_name))
 

@@ -26,6 +26,8 @@ int InstructionScheduler::GetTargetInstructionFlags(
     case kArm64Cmn:
     case kArm64Cmn32:
     case kArm64Cnt:
+    case kArm64Cnt32:
+    case kArm64Cnt64:
     case kArm64Tst:
     case kArm64Tst32:
     case kArm64Or:
@@ -36,6 +38,7 @@ int InstructionScheduler::GetTargetInstructionFlags(
     case kArm64Eor32:
     case kArm64Eon:
     case kArm64Eon32:
+    case kArm64Sadalp:
     case kArm64Saddlp:
     case kArm64Sub:
     case kArm64Sub32:
@@ -43,6 +46,7 @@ int InstructionScheduler::GetTargetInstructionFlags(
     case kArm64Mul32:
     case kArm64Smull:
     case kArm64Smull2:
+    case kArm64Uadalp:
     case kArm64Uaddlp:
     case kArm64Umull:
     case kArm64Umull2:
@@ -317,6 +321,8 @@ int InstructionScheduler::GetTargetInstructionFlags(
     case kArm64S128Not:
     case kArm64S128Select:
     case kArm64S128AndNot:
+    case kArm64Ssra:
+    case kArm64Usra:
     case kArm64S32x4ZipLeft:
     case kArm64S32x4ZipRight:
     case kArm64S32x4UnzipLeft:
@@ -361,14 +367,19 @@ int InstructionScheduler::GetTargetInstructionFlags(
     case kArm64LdrQ:
     case kArm64Ldrb:
     case kArm64Ldrsb:
+    case kArm64LdrsbW:
     case kArm64Ldrh:
     case kArm64Ldrsh:
+    case kArm64LdrshW:
     case kArm64Ldrsw:
     case kArm64LdrW:
     case kArm64Ldr:
     case kArm64LdrDecompressTaggedSigned:
     case kArm64LdrDecompressTaggedPointer:
     case kArm64LdrDecompressAnyTagged:
+    case kArm64LdarDecompressTaggedSigned:
+    case kArm64LdarDecompressTaggedPointer:
+    case kArm64LdarDecompressAnyTagged:
     case kArm64Peek:
     case kArm64LoadSplat:
     case kArm64LoadLane:
@@ -391,48 +402,22 @@ int InstructionScheduler::GetTargetInstructionFlags(
     case kArm64StrW:
     case kArm64Str:
     case kArm64StrCompressTagged:
+    case kArm64StlrCompressTagged:
     case kArm64DmbIsh:
     case kArm64DsbIsb:
     case kArm64StoreLane:
       return kHasSideEffect;
 
-    case kArm64Word64AtomicLoadUint8:
-    case kArm64Word64AtomicLoadUint16:
-    case kArm64Word64AtomicLoadUint32:
     case kArm64Word64AtomicLoadUint64:
       return kIsLoadOperation;
 
-    case kArm64Word64AtomicStoreWord8:
-    case kArm64Word64AtomicStoreWord16:
-    case kArm64Word64AtomicStoreWord32:
     case kArm64Word64AtomicStoreWord64:
-    case kArm64Word64AtomicAddUint8:
-    case kArm64Word64AtomicAddUint16:
-    case kArm64Word64AtomicAddUint32:
     case kArm64Word64AtomicAddUint64:
-    case kArm64Word64AtomicSubUint8:
-    case kArm64Word64AtomicSubUint16:
-    case kArm64Word64AtomicSubUint32:
     case kArm64Word64AtomicSubUint64:
-    case kArm64Word64AtomicAndUint8:
-    case kArm64Word64AtomicAndUint16:
-    case kArm64Word64AtomicAndUint32:
     case kArm64Word64AtomicAndUint64:
-    case kArm64Word64AtomicOrUint8:
-    case kArm64Word64AtomicOrUint16:
-    case kArm64Word64AtomicOrUint32:
     case kArm64Word64AtomicOrUint64:
-    case kArm64Word64AtomicXorUint8:
-    case kArm64Word64AtomicXorUint16:
-    case kArm64Word64AtomicXorUint32:
     case kArm64Word64AtomicXorUint64:
-    case kArm64Word64AtomicExchangeUint8:
-    case kArm64Word64AtomicExchangeUint16:
-    case kArm64Word64AtomicExchangeUint32:
     case kArm64Word64AtomicExchangeUint64:
-    case kArm64Word64AtomicCompareExchangeUint8:
-    case kArm64Word64AtomicCompareExchangeUint16:
-    case kArm64Word64AtomicCompareExchangeUint32:
     case kArm64Word64AtomicCompareExchangeUint64:
       return kHasSideEffect;
 

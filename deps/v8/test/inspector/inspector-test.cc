@@ -15,10 +15,10 @@
 #include "include/v8.h"
 #include "src/base/platform/platform.h"
 #include "src/base/small-vector.h"
+#include "src/base/vector.h"
 #include "src/flags/flags.h"
 #include "src/heap/read-only-heap.h"
 #include "src/utils/utils.h"
-#include "src/utils/vector.h"
 #include "test/inspector/frontend-channel.h"
 #include "test/inspector/isolate-data.h"
 #include "test/inspector/task-runner.h"
@@ -445,9 +445,6 @@ class InspectorExtension : public IsolateData::SetupGlobalTask {
     inspector->Set(isolate, "callWithScheduledBreak",
                    v8::FunctionTemplate::New(
                        isolate, &InspectorExtension::CallWithScheduledBreak));
-    inspector->Set(isolate, "allowAccessorFormatting",
-                   v8::FunctionTemplate::New(
-                       isolate, &InspectorExtension::AllowAccessorFormatting));
     inspector->Set(
         isolate, "markObjectAsNotInspectable",
         v8::FunctionTemplate::New(
@@ -475,6 +472,9 @@ class InspectorExtension : public IsolateData::SetupGlobalTask {
     inspector->Set(isolate, "setResourceNamePrefix",
                    v8::FunctionTemplate::New(
                        isolate, &InspectorExtension::SetResourceNamePrefix));
+    inspector->Set(isolate, "newExceptionWithMetaData",
+                   v8::FunctionTemplate::New(
+                       isolate, &InspectorExtension::newExceptionWithMetaData));
     global->Set(isolate, "inspector", inspector);
   }
 
@@ -578,21 +578,6 @@ class InspectorExtension : public IsolateData::SetupGlobalTask {
     result = args[0].As<v8::Function>()->Call(context, context->Global(), 0,
                                               nullptr);
     data->CancelPauseOnNextStatement(context_group_id);
-  }
-
-  static void AllowAccessorFormatting(
-      const v8::FunctionCallbackInfo<v8::Value>& args) {
-    if (args.Length() != 1 || !args[0]->IsObject()) {
-      FATAL("Internal error: allowAccessorFormatting('object').");
-    }
-    v8::Local<v8::Object> object = args[0].As<v8::Object>();
-    v8::Isolate* isolate = args.GetIsolate();
-    v8::Local<v8::Private> shouldFormatAccessorsPrivate = v8::Private::ForApi(
-        isolate, ToV8String(isolate, "allowAccessorFormatting"));
-    object
-        ->SetPrivate(isolate->GetCurrentContext(), shouldFormatAccessorsPrivate,
-                     v8::Null(isolate))
-        .ToChecked();
   }
 
   static void MarkObjectAsNotInspectable(
@@ -723,7 +708,6 @@ class InspectorExtension : public IsolateData::SetupGlobalTask {
     args.GetIsolate()->GetCurrentContext()->AllowCodeGenerationFromStrings(
         args[0].As<v8::Boolean>()->Value());
   }
-
   static void SetResourceNamePrefix(
       const v8::FunctionCallbackInfo<v8::Value>& args) {
     if (args.Length() != 1 || !args[0]->IsString()) {
@@ -733,6 +717,24 @@ class InspectorExtension : public IsolateData::SetupGlobalTask {
     v8::Local<v8::Context> context = isolate->GetCurrentContext();
     IsolateData* data = IsolateData::FromContext(context);
     data->SetResourceNamePrefix(v8::Local<v8::String>::Cast(args[0]));
+  }
+
+  static void newExceptionWithMetaData(
+      const v8::FunctionCallbackInfo<v8::Value>& args) {
+    if (args.Length() != 3 || !args[0]->IsString() || !args[1]->IsString() ||
+        !args[2]->IsString()) {
+      FATAL(
+          "Internal error: newExceptionWithMetaData('message', 'key', "
+          "'value').");
+    }
+    v8::Isolate* isolate = args.GetIsolate();
+    v8::Local<v8::Context> context = isolate->GetCurrentContext();
+    IsolateData* data = IsolateData::FromContext(context);
+
+    auto error = v8::Exception::Error(args[0].As<v8::String>());
+    CHECK(data->AssociateExceptionData(error, args[1].As<v8::String>(),
+                                       args[2].As<v8::String>()));
+    args.GetReturnValue().Set(error);
   }
 };
 

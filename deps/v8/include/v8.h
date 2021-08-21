@@ -50,6 +50,7 @@ class CFunction;
 class CallHandlerHelper;
 class Context;
 class CppHeap;
+class CTypeInfo;
 class Data;
 class Date;
 class EscapableHandleScope;
@@ -69,6 +70,7 @@ class NumberObject;
 class Object;
 class ObjectOperationDescriptor;
 class ObjectTemplate;
+class PageAllocator;
 class Platform;
 class Primitive;
 class PrimitiveArray;
@@ -127,6 +129,7 @@ template<typename T> class PropertyCallbackInfo;
 template<typename T> class ReturnValue;
 
 namespace internal {
+class BackgroundDeserializeTask;
 class BasicTracedReferenceExtractor;
 class ExternalString;
 class FunctionCallbackArguments;
@@ -885,6 +888,8 @@ class TracedReferenceBase {
         std::memory_order_relaxed);
   }
 
+  V8_EXPORT void CheckValue() const;
+
   // val_ points to a GlobalHandles node.
   internal::Address* val_ = nullptr;
 
@@ -926,8 +931,18 @@ class BasicTracedReference : public TracedReferenceBase {
         const_cast<BasicTracedReference<T>&>(*this));
   }
 
-  T* operator->() const { return reinterpret_cast<T*>(val_); }
-  T* operator*() const { return reinterpret_cast<T*>(val_); }
+  T* operator->() const {
+#ifdef V8_ENABLE_CHECKS
+    CheckValue();
+#endif  // V8_ENABLE_CHECKS
+    return reinterpret_cast<T*>(val_);
+  }
+  T* operator*() const {
+#ifdef V8_ENABLE_CHECKS
+    CheckValue();
+#endif  // V8_ENABLE_CHECKS
+    return reinterpret_cast<T*>(val_);
+  }
 
  private:
   enum DestructionMode { kWithDestructor, kWithoutDestructor };
@@ -1427,9 +1442,7 @@ class ScriptOriginOptions {
  */
 class ScriptOrigin {
  public:
-#if defined(_MSC_VER) && _MSC_VER >= 1910 /* Disable on VS2015 */
-  V8_DEPRECATE_SOON("Use constructor with primitive C++ types")
-#endif
+  V8_DEPRECATED("Use constructor with primitive C++ types")
   V8_INLINE explicit ScriptOrigin(
       Local<Value> resource_name, Local<Integer> resource_line_offset,
       Local<Integer> resource_column_offset,
@@ -1440,9 +1453,7 @@ class ScriptOrigin {
       Local<Boolean> is_wasm = Local<Boolean>(),
       Local<Boolean> is_module = Local<Boolean>(),
       Local<PrimitiveArray> host_defined_options = Local<PrimitiveArray>());
-#if defined(_MSC_VER) && _MSC_VER >= 1910 /* Disable on VS2015 */
-  V8_DEPRECATE_SOON("Use constructor that takes an isolate")
-#endif
+  V8_DEPRECATED("Use constructor that takes an isolate")
   V8_INLINE explicit ScriptOrigin(
       Local<Value> resource_name, int resource_line_offset = 0,
       int resource_column_offset = 0,
@@ -1461,11 +1472,11 @@ class ScriptOrigin {
       Local<PrimitiveArray> host_defined_options = Local<PrimitiveArray>());
 
   V8_INLINE Local<Value> ResourceName() const;
-  V8_DEPRECATE_SOON("Use getter with primitvie C++ types.")
+  V8_DEPRECATED("Use getter with primitvie C++ types.")
   V8_INLINE Local<Integer> ResourceLineOffset() const;
-  V8_DEPRECATE_SOON("Use getter with primitvie C++ types.")
+  V8_DEPRECATED("Use getter with primitvie C++ types.")
   V8_INLINE Local<Integer> ResourceColumnOffset() const;
-  V8_DEPRECATE_SOON("Use getter with primitvie C++ types.")
+  V8_DEPRECATED("Use getter with primitvie C++ types.")
   V8_INLINE Local<Integer> ScriptID() const;
   V8_INLINE int LineOffset() const;
   V8_INLINE int ColumnOffset() const;
@@ -1617,14 +1628,14 @@ class V8_EXPORT Module : public Data {
   /**
    * Returns the number of modules requested by this module.
    */
-  V8_DEPRECATE_SOON("Use Module::GetModuleRequests() and FixedArray::Length().")
+  V8_DEPRECATED("Use Module::GetModuleRequests() and FixedArray::Length().")
   int GetModuleRequestsLength() const;
 
   /**
    * Returns the ith module specifier in this module.
    * i must be < GetModuleRequestsLength() and >= 0.
    */
-  V8_DEPRECATE_SOON(
+  V8_DEPRECATED(
       "Use Module::GetModuleRequests() and ModuleRequest::GetSpecifier().")
   Local<String> GetModuleRequest(int i) const;
 
@@ -1632,7 +1643,7 @@ class V8_EXPORT Module : public Data {
    * Returns the source location (line number and column number) of the ith
    * module specifier's first occurrence in this module.
    */
-  V8_DEPRECATE_SOON(
+  V8_DEPRECATED(
       "Use Module::GetModuleRequests(), ModuleRequest::GetSourceOffset(), and "
       "Module::SourceOffsetToLocation().")
   Location GetModuleRequestLocation(int i) const;
@@ -1653,7 +1664,7 @@ class V8_EXPORT Module : public Data {
    */
   int GetIdentityHash() const;
 
-  using ResolveCallback =
+  using ResolveCallback V8_DEPRECATED("Use ResolveModuleCallback") =
       MaybeLocal<Module> (*)(Local<Context> context, Local<String> specifier,
                              Local<Module> referrer);
   using ResolveModuleCallback = MaybeLocal<Module> (*)(
@@ -1667,7 +1678,7 @@ class V8_EXPORT Module : public Data {
    * instantiation. (In the case where the callback throws an exception, that
    * exception is propagated.)
    */
-  V8_DEPRECATE_SOON(
+  V8_DEPRECATED(
       "Use the version of InstantiateModule that takes a ResolveModuleCallback "
       "parameter")
   V8_WARN_UNUSED_RESULT Maybe<bool> InstantiateModule(Local<Context> context,
@@ -1758,13 +1769,6 @@ class V8_EXPORT Module : public Data {
    */
   V8_WARN_UNUSED_RESULT Maybe<bool> SetSyntheticModuleExport(
       Isolate* isolate, Local<String> export_name, Local<Value> export_value);
-  V8_DEPRECATED(
-      "Use the preceding SetSyntheticModuleExport with an Isolate parameter, "
-      "instead of the one that follows.  The former will throw a runtime "
-      "error if called for an export that doesn't exist (as per spec); "
-      "the latter will crash with a failed CHECK().")
-  void SetSyntheticModuleExport(Local<String> export_name,
-                                Local<Value> export_value);
 
   V8_INLINE static Module* Cast(Data* data);
 
@@ -1805,6 +1809,8 @@ enum class ScriptType { kClassic, kModule };
  */
 class V8_EXPORT ScriptCompiler {
  public:
+  class ConsumeCodeCacheTask;
+
   /**
    * Compilation data that the embedder can cache and pass back to speed up
    * future compilations. The data is produced if the CompilerOptions passed to
@@ -1848,12 +1854,15 @@ class V8_EXPORT ScriptCompiler {
    */
   class Source {
    public:
-    // Source takes ownership of CachedData.
+    // Source takes ownership of both CachedData and CodeCacheConsumeTask.
     V8_INLINE Source(Local<String> source_string, const ScriptOrigin& origin,
-                     CachedData* cached_data = nullptr);
-    V8_INLINE explicit Source(Local<String> source_string,
-                              CachedData* cached_data = nullptr);
-    V8_INLINE ~Source();
+                     CachedData* cached_data = nullptr,
+                     ConsumeCodeCacheTask* consume_cache_task = nullptr);
+    // Source takes ownership of both CachedData and CodeCacheConsumeTask.
+    V8_INLINE explicit Source(
+        Local<String> source_string, CachedData* cached_data = nullptr,
+        ConsumeCodeCacheTask* consume_cache_task = nullptr);
+    V8_INLINE ~Source() = default;
 
     // Ownership of the CachedData or its buffers is *not* transferred to the
     // caller. The CachedData object is alive as long as the Source object is
@@ -1861,10 +1870,6 @@ class V8_EXPORT ScriptCompiler {
     V8_INLINE const CachedData* GetCachedData() const;
 
     V8_INLINE const ScriptOriginOptions& GetResourceOptions() const;
-
-    // Prevent copying.
-    Source(const Source&) = delete;
-    Source& operator=(const Source&) = delete;
 
    private:
     friend class ScriptCompiler;
@@ -1882,7 +1887,8 @@ class V8_EXPORT ScriptCompiler {
     // Cached data from previous compilation (if a kConsume*Cache flag is
     // set), or hold newly generated cache data (kProduce*Cache flags) are
     // set when calling a compile method.
-    CachedData* cached_data;
+    std::unique_ptr<CachedData> cached_data;
+    std::unique_ptr<ConsumeCodeCacheTask> consume_cache_task;
   };
 
   /**
@@ -1944,12 +1950,6 @@ class V8_EXPORT ScriptCompiler {
    public:
     enum Encoding { ONE_BYTE, TWO_BYTE, UTF8, WINDOWS_1252 };
 
-#if defined(_MSC_VER) && _MSC_VER >= 1910 /* Disable on VS2015 */
-    V8_DEPRECATED(
-        "This class takes ownership of source_stream, so use the constructor "
-        "taking a unique_ptr to make these semantics clearer")
-#endif
-    StreamedSource(ExternalSourceStream* source_stream, Encoding encoding);
     StreamedSource(std::unique_ptr<ExternalSourceStream> source_stream,
                    Encoding encoding);
     ~StreamedSource();
@@ -1979,6 +1979,26 @@ class V8_EXPORT ScriptCompiler {
         : data_(data) {}
 
     internal::ScriptStreamingData* data_;
+  };
+
+  /**
+   * A task which the embedder must run on a background thread to
+   * consume a V8 code cache. Returned by
+   * ScriptCompiler::StarConsumingCodeCache.
+   */
+  class V8_EXPORT ConsumeCodeCacheTask final {
+   public:
+    ~ConsumeCodeCacheTask();
+
+    void Run();
+
+   private:
+    friend class ScriptCompiler;
+
+    explicit ConsumeCodeCacheTask(
+        std::unique_ptr<internal::BackgroundDeserializeTask> impl);
+
+    std::unique_ptr<internal::BackgroundDeserializeTask> impl_;
   };
 
   enum CompileOptions {
@@ -2054,13 +2074,12 @@ class V8_EXPORT ScriptCompiler {
    * This API allows to start the streaming with as little data as possible, and
    * the remaining data (for example, the ScriptOrigin) is passed to Compile.
    */
-  V8_DEPRECATED("Use ScriptCompiler::StartStreaming instead.")
-  static ScriptStreamingTask* StartStreamingScript(
-      Isolate* isolate, StreamedSource* source,
-      CompileOptions options = kNoCompileOptions);
   static ScriptStreamingTask* StartStreaming(
       Isolate* isolate, StreamedSource* source,
       ScriptType type = ScriptType::kClassic);
+
+  static ConsumeCodeCacheTask* StartConsumingCodeCache(
+      Isolate* isolate, std::unique_ptr<CachedData> source);
 
   /**
    * Compiles a streamed script (bound to current context).
@@ -4296,11 +4315,13 @@ class V8_EXPORT Object : public Value {
   /**
    * Returns the context in which the object was created.
    */
+  // TODO(chromium:1166077): Mark as deprecate once users are updated.
   V8_DEPRECATE_SOON("Use MaybeLocal<Context> GetCreationContext()")
   Local<Context> CreationContext();
   MaybeLocal<Context> GetCreationContext();
 
   /** Same as above, but works for Persistents */
+  // TODO(chromium:1166077): Mark as deprecate once users are updated.
   V8_DEPRECATE_SOON(
       "Use MaybeLocal<Context> GetCreationContext(const "
       "PersistentBase<Object>& object)")
@@ -4425,6 +4446,7 @@ class V8_EXPORT Array : public Object {
   static Local<Array> New(Isolate* isolate, Local<Value>* elements,
                           size_t length);
   V8_INLINE static Array* Cast(Value* obj);
+
  private:
   Array();
   static void CheckCast(Value* obj);
@@ -4899,6 +4921,12 @@ class V8_EXPORT Promise : public Object {
    * Marks this promise as handled to avoid reporting unhandled rejections.
    */
   void MarkAsHandled();
+
+  /**
+   * Marks this promise as silent to prevent pausing the debugger when the
+   * promise is rejected.
+   */
+  void MarkAsSilent();
 
   V8_INLINE static Promise* Cast(Value* obj);
 
@@ -5397,7 +5425,10 @@ class V8_EXPORT ArrayBuffer : public Object {
     enum class AllocationMode { kNormal, kReservation };
 
     /**
-     * malloc/free based convenience allocator.
+     * Convenience allocator.
+     *
+     * When the virtual memory cage is enabled, this allocator will allocate its
+     * backing memory inside the cage. Otherwise, it will rely on malloc/free.
      *
      * Caller takes ownership, i.e. the returned object needs to be freed using
      * |delete allocator| once it is no longer in use.
@@ -6073,7 +6104,8 @@ class V8_EXPORT Template : public Data {
            PropertyAttribute attributes = None);
   void SetPrivate(Local<Private> name, Local<Data> value,
                   PropertyAttribute attributes = None);
-  V8_INLINE void Set(Isolate* isolate, const char* name, Local<Data> value);
+  V8_INLINE void Set(Isolate* isolate, const char* name, Local<Data> value,
+                     PropertyAttribute attributes = None);
 
   void SetAccessorProperty(
      Local<Name> name,
@@ -6503,7 +6535,9 @@ class V8_EXPORT FunctionTemplate : public Template {
       Local<Signature> signature = Local<Signature>(), int length = 0,
       ConstructorBehavior behavior = ConstructorBehavior::kAllow,
       SideEffectType side_effect_type = SideEffectType::kHasSideEffect,
-      const CFunction* c_function = nullptr);
+      const CFunction* c_function = nullptr, uint16_t instance_type = 0,
+      uint16_t allowed_receiver_instance_type_range_start = 0,
+      uint16_t allowed_receiver_instance_type_range_end = 0);
 
   /** Creates a function template for multiple overloaded fast API calls.*/
   static Local<FunctionTemplate> NewWithCFunctionOverloads(
@@ -7223,7 +7257,9 @@ using MessageCallback = void (*)(Local<Message> message, Local<Value> data);
 
 // --- Tracing ---
 
-using LogEventCallback = void (*)(const char* name, int event);
+enum LogEventStatus : int { kStart = 0, kEnd = 1, kStamp = 2 };
+using LogEventCallback = void (*)(const char* name,
+                                  int /* LogEventStatus */ status);
 
 /**
  * Create new error objects by calling the corresponding error object
@@ -7299,7 +7335,8 @@ using CallCompletedCallback = void (*)(Isolate*);
  * fails (e.g. due to stack overflow), the embedder must propagate
  * that exception by returning an empty MaybeLocal.
  */
-using HostImportModuleDynamicallyCallback =
+using HostImportModuleDynamicallyCallback V8_DEPRECATED(
+    "Use HostImportModuleDynamicallyWithImportAssertionsCallback instead") =
     MaybeLocal<Promise> (*)(Local<Context> context,
                             Local<ScriptOrModule> referrer,
                             Local<String> specifier);
@@ -7811,13 +7848,13 @@ struct JitCodeEvent {
   // statement, and is used to indicate possible break locations.
   enum PositionType { POSITION, STATEMENT_POSITION };
 
-  // There are two different kinds of JitCodeEvents, one for JIT code generated
-  // by the optimizing compiler, and one for byte code generated for the
-  // interpreter.  For JIT_CODE events, the |code_start| member of the event
-  // points to the beginning of jitted assembly code, while for BYTE_CODE
-  // events, |code_start| points to the first bytecode of the interpreted
-  // function.
-  enum CodeType { BYTE_CODE, JIT_CODE };
+  // There are three different kinds of CodeType, one for JIT code generated
+  // by the optimizing compiler, one for byte code generated for the
+  // interpreter, and one for code generated from Wasm. For JIT_CODE and
+  // WASM_CODE, |code_start| points to the beginning of jitted assembly code,
+  // while for BYTE_CODE events, |code_start| points to the first bytecode of
+  // the interpreted function.
+  enum CodeType { BYTE_CODE, JIT_CODE, WASM_CODE };
 
   // Type of event.
   EventType type;
@@ -8346,11 +8383,6 @@ class V8_EXPORT Isolate {
      */
     int embedder_wrapper_type_index = -1;
     int embedder_wrapper_object_index = -1;
-
-    V8_DEPRECATED(
-        "Setting this has no effect. Embedders should ignore import assertions "
-        "that they do not use.")
-    std::vector<std::string> supported_import_assertions;
   };
 
   /**
@@ -8547,7 +8579,7 @@ class V8_EXPORT Isolate {
     kDateToLocaleTimeString = 68,
     kAttemptOverrideReadOnlyOnPrototypeSloppy = 69,
     kAttemptOverrideReadOnlyOnPrototypeStrict = 70,
-    kOptimizedFunctionWithOneShotBytecode = 71,
+    kOptimizedFunctionWithOneShotBytecode = 71,  // Unused.
     kRegExpMatchIsTrueishOnNonJSRegExp = 72,
     kRegExpMatchIsFalseishOnJSRegExp = 73,
     kDateGetTimezoneOffset = 74,  // Unused.
@@ -8650,6 +8682,14 @@ class V8_EXPORT Isolate {
   static Isolate* GetCurrent();
 
   /**
+   * Returns the entered isolate for the current thread or NULL in
+   * case there is no current isolate.
+   *
+   * No checks are performed by this method.
+   */
+  static Isolate* TryGetCurrent();
+
+  /**
    * Clears the set of objects held strongly by the heap. This set of
    * objects are originally built when a WeakRef is created or
    * successfully dereferenced.
@@ -8681,7 +8721,7 @@ class V8_EXPORT Isolate {
    * This specifies the callback called by the upcoming dynamic
    * import() language feature to load modules.
    */
-  V8_DEPRECATE_SOON(
+  V8_DEPRECATED(
       "Use the version of SetHostImportModuleDynamicallyCallback that takes a "
       "HostImportModuleDynamicallyWithImportAssertionsCallback instead")
   void SetHostImportModuleDynamicallyCallback(
@@ -8714,6 +8754,13 @@ class V8_EXPORT Isolate {
    * the isolate is executing long running JavaScript code.
    */
   void MemoryPressureNotification(MemoryPressureLevel level);
+
+  /**
+   * Drop non-essential caches. Should only be called from testing code.
+   * The method can potentially block for a long time and does not necessarily
+   * trigger GC.
+   */
+  void ClearCachesForTesting();
 
   /**
    * Methods below this point require holding a lock (using Locker) in
@@ -8846,10 +8893,6 @@ class V8_EXPORT Isolate {
   bool MeasureMemory(
       std::unique_ptr<MeasureMemoryDelegate> delegate,
       MeasureMemoryExecution execution = MeasureMemoryExecution::kDefault);
-
-  V8_DEPRECATED("Use the version with a delegate")
-  MaybeLocal<Promise> MeasureMemory(Local<Context> context,
-                                    MeasureMemoryMode mode);
 
   /**
    * Get a call stack sample from the isolate.
@@ -9528,13 +9571,6 @@ class V8_EXPORT Isolate {
    * Set the callback to invoke to check if code generation from
    * strings should be allowed.
    */
-  V8_DEPRECATED(
-      "Use Isolate::SetModifyCodeGenerationFromStringsCallback with "
-      "ModifyCodeGenerationFromStringsCallback2 instead. See "
-      "http://crbug.com/1096017 and TC39 Dynamic Code Brand Checks proposal "
-      "at https://github.com/tc39/proposal-dynamic-code-brand-checks.")
-  void SetModifyCodeGenerationFromStringsCallback(
-      ModifyCodeGenerationFromStringsCallback callback);
   void SetModifyCodeGenerationFromStringsCallback(
       ModifyCodeGenerationFromStringsCallback2 callback);
 
@@ -9800,7 +9836,8 @@ class V8_EXPORT V8 {
     const int kBuildConfiguration =
         (internal::PointerCompressionIsEnabled() ? kPointerCompression : 0) |
         (internal::SmiValuesAre31Bits() ? k31BitSmis : 0) |
-        (internal::HeapSandboxIsEnabled() ? kHeapSandbox : 0);
+        (internal::HeapSandboxIsEnabled() ? kHeapSandbox : 0) |
+        (internal::VirtualMemoryCageIsEnabled() ? kVirtualMemoryCage : 0);
     return Initialize(kBuildConfiguration);
   }
 
@@ -9882,29 +9919,36 @@ class V8_EXPORT V8 {
    */
   static void ShutdownPlatform();
 
-#if V8_OS_POSIX
+#ifdef V8_VIRTUAL_MEMORY_CAGE
+  //
+  // Virtual Memory Cage related API.
+  //
+  // This API is not yet stable and subject to changes in the future.
+  //
+
   /**
-   * Give the V8 signal handler a chance to handle a fault.
+   * Initializes the virtual memory cage for V8.
    *
-   * This function determines whether a memory access violation can be recovered
-   * by V8. If so, it will return true and modify context to return to a code
-   * fragment that can recover from the fault. Otherwise, TryHandleSignal will
-   * return false.
-   *
-   * The parameters to this function correspond to those passed to a Linux
-   * signal handler.
-   *
-   * \param signal_number The signal number.
-   *
-   * \param info A pointer to the siginfo_t structure provided to the signal
-   * handler.
-   *
-   * \param context The third argument passed to the Linux signal handler, which
-   * points to a ucontext_t structure.
+   * This must be invoked after the platform was initialized but before V8 is
+   * initialized. The virtual memory cage is torn down during platform shutdown.
+   * Returns true on success, false otherwise.
    */
-  V8_DEPRECATED("Use TryHandleWebAssemblyTrapPosix")
-  static bool TryHandleSignal(int signal_number, void* info, void* context);
-#endif  // V8_OS_POSIX
+  static bool InitializeVirtualMemoryCage();
+
+  /**
+   * Provides access to the data page allocator for the virtual memory cage.
+   *
+   * This allocator allocates pages inside the data cage part of the virtual
+   * memory cage in which data buffers such as ArrayBuffer backing stores must
+   * be allocated. Objects in this region should generally consists purely of
+   * data and not contain any pointers. It should be assumed that an attacker
+   * can corrupt data inside the cage, and so in particular the contents of
+   * pages returned by this allocator, arbitrarily and concurrently.
+   *
+   * The virtual memory cage must have been initialized before.
+   */
+  static PageAllocator* GetVirtualMemoryCageDataPageAllocator();
+#endif
 
   /**
    * Activate trap-based bounds checking for WebAssembly.
@@ -9933,15 +9977,6 @@ class V8_EXPORT V8 {
    */
   static void GetSharedMemoryStatistics(SharedMemoryStatistics* statistics);
 
-  /**
-   * Notifies V8 that the process is cross-origin-isolated, which enables
-   * defining the SharedArrayBuffer function on the global object of Contexts.
-   */
-  V8_DEPRECATED(
-      "Use the command line argument --enable-sharedarraybuffer-per-context "
-      "together with SetSharedArrayBufferConstructorEnabledCallback")
-  static void SetIsCrossOriginIsolated();
-
  private:
   V8();
 
@@ -9949,6 +9984,7 @@ class V8_EXPORT V8 {
     kPointerCompression = 1 << 0,
     k31BitSmis = 1 << 1,
     kHeapSandbox = 1 << 2,
+    kVirtualMemoryCage = 1 << 3,
   };
 
   /**
@@ -10083,8 +10119,8 @@ class V8_EXPORT SnapshotCreator {
 
   /**
    * Attach arbitrary V8::Data to the context snapshot, which can be retrieved
-   * via Context::GetDataFromSnapshot after deserialization. This data does not
-   * survive when a new snapshot is created from an existing snapshot.
+   * via Context::GetDataFromSnapshotOnce after deserialization. This data does
+   * not survive when a new snapshot is created from an existing snapshot.
    * \returns the index for retrieval.
    */
   template <class T>
@@ -10092,8 +10128,8 @@ class V8_EXPORT SnapshotCreator {
 
   /**
    * Attach arbitrary V8::Data to the isolate snapshot, which can be retrieved
-   * via Isolate::GetDataFromSnapshot after deserialization. This data does not
-   * survive when a new snapshot is created from an existing snapshot.
+   * via Isolate::GetDataFromSnapshotOnce after deserialization. This data does
+   * not survive when a new snapshot is created from an existing snapshot.
    * \returns the index for retrieval.
    */
   template <class T>
@@ -10353,20 +10389,11 @@ class V8_EXPORT TryCatch {
    */
   void SetCaptureMessage(bool value);
 
-  /**
-   * There are cases when the raw address of C++ TryCatch object cannot be
-   * used for comparisons with addresses into the JS stack. The cases are:
-   * 1) ARM, ARM64 and MIPS simulators which have separate JS stack.
-   * 2) Address sanitizer allocates local C++ object in the heap when
-   *    UseAfterReturn mode is enabled.
-   * This method returns address that can be used for comparisons with
-   * addresses into the JS stack. When neither simulator nor ASAN's
-   * UseAfterReturn is enabled, then the address returned will be the address
-   * of the C++ try catch handler itself.
-   */
+  V8_DEPRECATE_SOON(
+      "This is private information that should not be exposed by the API")
   static void* JSStackComparableAddress(TryCatch* handler) {
     if (handler == nullptr) return nullptr;
-    return handler->js_stack_comparable_address_;
+    return reinterpret_cast<void*>(handler->JSStackComparableAddressPrivate());
   }
 
   TryCatch(const TryCatch&) = delete;
@@ -10380,13 +10407,28 @@ class V8_EXPORT TryCatch {
   void operator delete(void*, size_t);
   void operator delete[](void*, size_t);
 
+  /**
+   * There are cases when the raw address of C++ TryCatch object cannot be
+   * used for comparisons with addresses into the JS stack. The cases are:
+   * 1) ARM, ARM64 and MIPS simulators which have separate JS stack.
+   * 2) Address sanitizer allocates local C++ object in the heap when
+   *    UseAfterReturn mode is enabled.
+   * This method returns address that can be used for comparisons with
+   * addresses into the JS stack. When neither simulator nor ASAN's
+   * UseAfterReturn is enabled, then the address returned will be the address
+   * of the C++ try catch handler itself.
+   */
+  internal::Address JSStackComparableAddressPrivate() {
+    return js_stack_comparable_address_;
+  }
+
   void ResetInternal();
 
   internal::Isolate* isolate_;
   TryCatch* next_;
   void* exception_;
   void* message_obj_;
-  void* js_stack_comparable_address_;
+  internal::Address js_stack_comparable_address_;
   bool is_verbose_ : 1;
   bool can_continue_ : 1;
   bool capture_message_ : 1;
@@ -10394,6 +10436,7 @@ class V8_EXPORT TryCatch {
   bool has_terminated_ : 1;
 
   friend class internal::Isolate;
+  friend class internal::ThreadLocalTop;
 };
 
 
@@ -10696,14 +10739,20 @@ class V8_EXPORT Context : public Data {
     /**
      * Returns address that is comparable with JS stack address.  Note that JS
      * stack may be allocated separately from the native stack.  See also
-     * |TryCatch::JSStackComparableAddress| for details.
+     * |TryCatch::JSStackComparableAddressPrivate| for details.
      */
+    V8_DEPRECATE_SOON(
+        "This is private V8 information that should not be exposed in the API.")
     uintptr_t JSStackComparableAddress() const {
-      return js_stack_comparable_address_;
+      return JSStackComparableAddressPrivate();
     }
 
    private:
     friend class internal::Isolate;
+
+    uintptr_t JSStackComparableAddressPrivate() const {
+      return js_stack_comparable_address_;
+    }
 
     Local<Context> backup_incumbent_context_;
     uintptr_t js_stack_comparable_address_ = 0;
@@ -11552,7 +11601,8 @@ int ScriptOrigin::ScriptId() const { return script_id_; }
 Local<Value> ScriptOrigin::SourceMapUrl() const { return source_map_url_; }
 
 ScriptCompiler::Source::Source(Local<String> string, const ScriptOrigin& origin,
-                               CachedData* data)
+                               CachedData* data,
+                               ConsumeCodeCacheTask* consume_cache_task)
     : source_string(string),
       resource_name(origin.ResourceName()),
       resource_line_offset(origin.LineOffset()),
@@ -11560,21 +11610,18 @@ ScriptCompiler::Source::Source(Local<String> string, const ScriptOrigin& origin,
       resource_options(origin.Options()),
       source_map_url(origin.SourceMapUrl()),
       host_defined_options(origin.HostDefinedOptions()),
-      cached_data(data) {}
+      cached_data(data),
+      consume_cache_task(consume_cache_task) {}
 
-ScriptCompiler::Source::Source(Local<String> string,
-                               CachedData* data)
-    : source_string(string), cached_data(data) {}
-
-
-ScriptCompiler::Source::~Source() {
-  delete cached_data;
-}
-
+ScriptCompiler::Source::Source(Local<String> string, CachedData* data,
+                               ConsumeCodeCacheTask* consume_cache_task)
+    : source_string(string),
+      cached_data(data),
+      consume_cache_task(consume_cache_task) {}
 
 const ScriptCompiler::CachedData* ScriptCompiler::Source::GetCachedData()
     const {
-  return cached_data;
+  return cached_data.get();
 }
 
 const ScriptOriginOptions& ScriptCompiler::Source::GetResourceOptions() const {
@@ -11585,10 +11632,11 @@ Local<Boolean> Boolean::New(Isolate* isolate, bool value) {
   return value ? True(isolate) : False(isolate);
 }
 
-void Template::Set(Isolate* isolate, const char* name, Local<Data> value) {
+void Template::Set(Isolate* isolate, const char* name, Local<Data> value,
+                   PropertyAttribute attributes) {
   Set(String::NewFromUtf8(isolate, name, NewStringType::kInternalized)
           .ToLocalChecked(),
-      value);
+      value, attributes);
 }
 
 FunctionTemplate* FunctionTemplate::Cast(Data* data) {
@@ -11626,10 +11674,8 @@ Local<Value> Object::GetInternalField(int index) {
   A obj = *reinterpret_cast<A*>(this);
   // Fast path: If the object is a plain JSObject, which is the common case, we
   // know where to find the internal fields and can return the value directly.
-  auto instance_type = I::GetInstanceType(obj);
-  if (instance_type == I::kJSObjectType ||
-      instance_type == I::kJSApiObjectType ||
-      instance_type == I::kJSSpecialApiObjectType) {
+  int instance_type = I::GetInstanceType(obj);
+  if (v8::internal::CanHaveInternalField(instance_type)) {
     int offset = I::kJSObjectHeaderSize + (I::kEmbedderDataSlotSize * index);
     A value = I::ReadRawField<A>(obj, offset);
 #ifdef V8_COMPRESS_POINTERS
@@ -11655,9 +11701,7 @@ void* Object::GetAlignedPointerFromInternalField(int index) {
   // Fast path: If the object is a plain JSObject, which is the common case, we
   // know where to find the internal fields and can return the value directly.
   auto instance_type = I::GetInstanceType(obj);
-  if (V8_LIKELY(instance_type == I::kJSObjectType ||
-                instance_type == I::kJSApiObjectType ||
-                instance_type == I::kJSSpecialApiObjectType)) {
+  if (v8::internal::CanHaveInternalField(instance_type)) {
     int offset = I::kJSObjectHeaderSize + (I::kEmbedderDataSlotSize * index);
 #ifdef V8_HEAP_SANDBOX
     offset += I::kEmbedderDataSlotRawPayloadOffset;

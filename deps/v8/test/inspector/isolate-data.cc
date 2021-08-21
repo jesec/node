@@ -4,8 +4,8 @@
 
 #include "test/inspector/isolate-data.h"
 
+#include "src/base/vector.h"
 #include "src/inspector/test-interface.h"
-#include "src/utils/vector.h"
 #include "test/inspector/task-runner.h"
 #include "test/inspector/utils.h"
 
@@ -367,17 +367,6 @@ std::vector<int> IsolateData::GetSessionIds(int context_group_id) {
   return result;
 }
 
-bool IsolateData::formatAccessorsAsProperties(v8::Local<v8::Value> object) {
-  v8::Local<v8::Context> context = isolate()->GetCurrentContext();
-  v8::Local<v8::Private> shouldFormatAccessorsPrivate = v8::Private::ForApi(
-      isolate(),
-      v8::String::NewFromUtf8Literal(isolate(), "allowAccessorFormatting"));
-  CHECK(object->IsObject());
-  return object.As<v8::Object>()
-      ->HasPrivate(context, shouldFormatAccessorsPrivate)
-      .FromMaybe(false);
-}
-
 bool IsolateData::isInspectableHeapObject(v8::Local<v8::Object> object) {
   v8::Local<v8::Context> context = isolate()->GetCurrentContext();
   v8::MicrotasksScope microtasks_scope(
@@ -471,6 +460,13 @@ void IsolateData::maxAsyncCallStackDepthChanged(int depth) {
 
 void IsolateData::SetResourceNamePrefix(v8::Local<v8::String> prefix) {
   resource_name_prefix_.Reset(isolate(), prefix);
+}
+
+bool IsolateData::AssociateExceptionData(v8::Local<v8::Value> exception,
+                                         v8::Local<v8::Name> key,
+                                         v8::Local<v8::Value> value) {
+  return inspector_->associateExceptionData(
+      this->isolate()->GetCurrentContext(), exception, key, value);
 }
 
 namespace {
