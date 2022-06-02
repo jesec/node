@@ -522,6 +522,7 @@
         'src/node_report_module.cc',
         'src/node_report_utils.cc',
         'src/node_serdes.cc',
+        'src/node_single_binary.cc',
         'src/node_shadow_realm.cc',
         'src/node_snapshotable.cc',
         'src/node_sockaddr.cc',

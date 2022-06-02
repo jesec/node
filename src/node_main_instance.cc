@@ -27,6 +27,9 @@ using v8::HandleScope;
 using v8::Isolate;
 using v8::Local;
 using v8::Locker;
+using v8::MaybeLocal;
+using v8::String;
+using v8::Value;
 
 NodeMainInstance::NodeMainInstance(Isolate* isolate,
                                    uv_loop_t* event_loop,
@@ -118,7 +121,8 @@ NodeMainInstance::~NodeMainInstance() {
   isolate_->Dispose();
 }
 
-int NodeMainInstance::Run() {
+int NodeMainInstance::Run(const char* embedded_script_source_utf8,
+                          size_t embedded_script_offset) {
   Locker locker(isolate_);
   Isolate::Scope isolate_scope(isolate_);
   HandleScope handle_scope(isolate_);
@@ -129,13 +133,47 @@ int NodeMainInstance::Run() {
   CHECK_NOT_NULL(env);
 
   Context::Scope context_scope(env->context());
-  Run(&exit_code, env.get());
+  Run(&exit_code, env.get(), embedded_script_source_utf8, embedded_script_offset);
   return exit_code;
 }
 
-void NodeMainInstance::Run(int* exit_code, Environment* env) {
+void NodeMainInstance::Run(int* exit_code,
+                           Environment* env,
+                           const char* embedded_script_source_utf8,
+                           size_t embedded_script_offset) {
   if (*exit_code == 0) {
-    LoadEnvironment(env, StartExecutionCallback{});
+    if (embedded_script_source_utf8 == nullptr) {
+      LoadEnvironment(env, StartExecutionCallback{});
+    } else {
+      Isolate* isolate = env->isolate();
+      Local<Context> context = env->context();
+      LoadEnvironment(
+          env,
+          [&](const StartExecutionCallbackInfo& info) -> MaybeLocal<Value> {
+            // This is a slightly hacky way to convert UTF-8 to UTF-16.
+            Local<String> str =
+                String::NewFromUtf8(isolate,
+                                    embedded_script_source_utf8).ToLocalChecked();
+            auto main_utf16 = std::make_unique<String::Value>(isolate, str);
+
+            const char* name = "embedded_script";
+            READONLY_PROPERTY(env->process_object(),
+                              "embeddedScriptOffset",
+                              ToV8Value(context, embedded_script_offset).ToLocalChecked());
+
+            native_module::NativeModuleEnv::Add(
+                name,
+                UnionBytes(**main_utf16, main_utf16->length()));
+            env->set_main_utf16(std::move(main_utf16));
+            std::vector<Local<String>> params = {
+                env->process_string(),
+                env->require_string()};
+            std::vector<Local<Value>> args = {
+                env->process_object(),
+                env->native_module_require()};
+            return ExecuteBootstrapper(env, name, &params, &args);
+          });
+    }
 
     *exit_code = SpinEventLoop(env).FromMaybe(1);
   }

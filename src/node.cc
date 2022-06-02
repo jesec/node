@@ -38,6 +38,7 @@
 #include "node_process-inl.h"
 #include "node_report.h"
 #include "node_revert.h"
+#include "node_single_binary.h"
 #include "node_snapshot_builder.h"
 #include "node_v8_platform-inl.h"
 #include "node_version.h"
@@ -1174,7 +1175,34 @@ void TearDownOncePerProcess() {
 }
 
 int Start(int argc, char** argv) {
-  InitializationResult result = InitializeOncePerProcess(argc, argv);
+  node::single_binary::single_binary_info* single_binary_info =
+      node::single_binary::checkForSingleBinary();
+
+  InitializationResult result;
+  if (!single_binary_info->valid) {
+    result = InitializeOncePerProcess(argc, argv);
+  } else {
+    int new_argc = 0;
+    auto new_argv = new char*[argc + single_binary_info->argc + 3];
+
+    new_argv[0] = argv[0];
+
+    for (int i = 0; i < single_binary_info->argc; ++i) {
+      new_argv[++new_argc] = single_binary_info->argv[i];
+    }
+
+    new_argv[++new_argc] = "node:embedded_script";
+    new_argv[++new_argc] = "--";
+
+    for (int i = 1; i < argc; ++i) {
+      new_argv[++new_argc] = argv[i];
+    }
+
+    new_argv[++new_argc] = nullptr;
+
+    result = InitializeOncePerProcess(new_argc,
+                                      new_argv);
+  }
   if (result.early_return) {
     return result.exit_code;
   }
@@ -1201,7 +1229,12 @@ int Start(int argc, char** argv) {
                                    per_process::v8_platform.Platform(),
                                    result.args,
                                    result.exec_args);
-    result.exit_code = main_instance.Run();
+
+    if (!single_binary_info->valid) {
+      result.exit_code = main_instance.Run();
+    } else {
+      result.exit_code = main_instance.Run(single_binary_info->script, single_binary_info->script_pos);
+    }
   }
 
   TearDownOncePerProcess();
