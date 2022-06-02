@@ -8,6 +8,7 @@
 #include "node_internals.h"
 #include "node_native_module.h"
 #include "node_options-inl.h"
+#include "node_single_executable.h"
 #include "node_snapshot_builder.h"
 #include "node_snapshotable.h"
 #include "node_v8_platform-inl.h"
@@ -27,6 +28,9 @@ using v8::HandleScope;
 using v8::Isolate;
 using v8::Local;
 using v8::Locker;
+using v8::MaybeLocal;
+using v8::String;
+using v8::Value;
 
 NodeMainInstance::NodeMainInstance(Isolate* isolate,
                                    uv_loop_t* event_loop,
@@ -134,7 +138,45 @@ int NodeMainInstance::Run() {
 
 void NodeMainInstance::Run(int* exit_code, Environment* env) {
   if (*exit_code == 0) {
-    LoadEnvironment(env, StartExecutionCallback{});
+    if (!per_process::single_executable_info.valid) {
+      LoadEnvironment(env, StartExecutionCallback{});
+    } else {
+      Isolate* isolate = env->isolate();
+      Local<Context> context = env->context();
+      LoadEnvironment(
+          env,
+          [&](const StartExecutionCallbackInfo& info) -> MaybeLocal<Value> {
+            // This is a slightly hacky way to convert UTF-8 to UTF-16.
+            Local<String> str =
+                String::NewFromUtf8(
+                    isolate, per_process::single_executable_info.script.data())
+                    .ToLocalChecked();
+            auto main_utf16 = std::make_unique<String::Value>(isolate, str);
+
+            const char* name = "embedded_script";
+            READONLY_PROPERTY(
+                env->process_object(),
+                "embeddedScriptOffset",
+                ToV8Value(context,
+                          per_process::single_executable_info.script_pos)
+                    .ToLocalChecked());
+            READONLY_PROPERTY(
+                env->process_object(),
+                "embeddedScriptSize",
+                ToV8Value(context,
+                          per_process::single_executable_info.script.size())
+                    .ToLocalChecked());
+
+            native_module::NativeModuleLoader::Add(
+                name, UnionBytes(**main_utf16, main_utf16->length()));
+            env->set_main_utf16(std::move(main_utf16));
+            std::vector<Local<String>> params = {env->process_string(),
+                                                 env->require_string()};
+            std::vector<Local<Value>> args = {env->process_object(),
+                                              env->native_module_require()};
+            return ExecuteBootstrapper(env, name, &params, &args);
+          });
+    }
 
     *exit_code = SpinEventLoop(env).FromMaybe(1);
   }
@@ -147,8 +189,7 @@ void NodeMainInstance::Run(int* exit_code, Environment* env) {
   struct sigaction act;
   memset(&act, 0, sizeof(act));
   for (unsigned nr = 1; nr < kMaxSignal; nr += 1) {
-    if (nr == SIGKILL || nr == SIGSTOP || nr == SIGPROF)
-      continue;
+    if (nr == SIGKILL || nr == SIGSTOP || nr == SIGPROF) continue;
     act.sa_handler = (nr == SIGPIPE) ? SIG_IGN : SIG_DFL;
     CHECK_EQ(0, sigaction(nr, &act, nullptr));
   }

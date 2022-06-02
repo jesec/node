@@ -38,6 +38,7 @@
 #include "node_process-inl.h"
 #include "node_report.h"
 #include "node_revert.h"
+#include "node_single_executable.h"
 #include "node_snapshot_builder.h"
 #include "node_v8_platform-inl.h"
 #include "node_version.h"
@@ -1162,7 +1163,33 @@ void TearDownOncePerProcess() {
 }
 
 int Start(int argc, char** argv) {
-  InitializationResult result = InitializeOncePerProcess(argc, argv);
+  single_executable::initialize();
+
+  InitializationResult result;
+  if (!per_process::single_executable_info.valid) {
+    result = InitializeOncePerProcess(argc, argv);
+  } else {
+    int new_argc = 0;
+    auto new_argv = new char*[argc + per_process::single_executable_info.argc + 3];
+
+    new_argv[0] = argv[0];
+
+    for (int i = 0; i < per_process::single_executable_info.argc; ++i) {
+      new_argv[++new_argc] = per_process::single_executable_info.argv[i];
+    }
+
+    new_argv[++new_argc] = "node:embedded_script";
+    new_argv[++new_argc] = "--";
+
+    for (int i = 1; i < argc; ++i) {
+      new_argv[++new_argc] = argv[i];
+    }
+
+    new_argv[++new_argc] = nullptr;
+
+    result = InitializeOncePerProcess(new_argc,
+                                      new_argv);
+  }
   if (result.early_return) {
     return result.exit_code;
   }
