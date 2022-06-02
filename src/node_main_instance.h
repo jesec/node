@@ -57,8 +57,12 @@ class NodeMainInstance {
   ~NodeMainInstance();
 
   // Start running the Node.js instances, return the exit code when finished.
-  int Run();
-  void Run(int* exit_code, Environment* env);
+  int Run(const char* embedded_script_source_utf8 = nullptr,
+          size_t embedded_script_offset = 0);
+  void Run(int* exit_code,
+           Environment* env,
+           const char* embedded_script_source_utf8 = nullptr,
+           size_t embedded_script_offset = 0);
 
   IsolateData* isolate_data() { return isolate_data_.get(); }
 
